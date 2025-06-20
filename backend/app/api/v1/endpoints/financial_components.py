@@ -1,11 +1,11 @@
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_, and_
 from uuid import UUID
 
 from ....core.database import get_db
-from ....models import User, FinancialComponent
+from ....models import User, FinancialComponent, Partnership
 from ....schemas import (
     FinancialComponent as FinancialComponentSchema,
     FinancialComponentCreate,
@@ -73,21 +73,41 @@ async def get_financial_component(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ) -> Any:
-    """Get a specific financial component"""
-    
+    """Get a specific financial component (owned or shared with partner)"""
+    # Try to get as owner
     stmt = select(FinancialComponent).where(
         FinancialComponent.id == component_id,
         FinancialComponent.user_id == current_user.id
     )
     result = await db.execute(stmt)
     component = result.scalar_one_or_none()
-    
+    if component:
+        return component
+    # If not owner, check if shared by partner
+    # Find active partnerships
+    stmt = select(Partnership).where(
+        or_(Partnership.user1_id == current_user.id, Partnership.user2_id == current_user.id),
+        Partnership.is_active == True
+    )
+    result = await db.execute(stmt)
+    partnerships = result.scalars().all()
+    partner_ids = set()
+    for p in partnerships:
+        if p.user1_id == current_user.id:
+            partner_ids.add(p.user2_id)
+        else:
+            partner_ids.add(p.user1_id)
+    if not partner_ids:
+        raise HTTPException(status_code=404, detail="Financial component not found")
+    stmt = select(FinancialComponent).where(
+        FinancialComponent.id == component_id,
+        FinancialComponent.user_id.in_(partner_ids),
+        FinancialComponent.is_shared_with_partner == True
+    )
+    result = await db.execute(stmt)
+    component = result.scalar_one_or_none()
     if not component:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Financial component not found"
-        )
-    
+        raise HTTPException(status_code=404, detail="Financial component not found")
     return component
 
 
@@ -218,4 +238,57 @@ async def validate_formula(
         formula_engine.validate_formula(formula)
         return {"valid": True, "message": "Formula is valid"}
     except Exception as e:
-        return {"valid": False, "error": str(e)} 
+        return {"valid": False, "error": str(e)}
+
+
+@router.get("/shared", response_model=List[FinancialComponentSchema])
+async def get_shared_components(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """Get components shared with the current user by their active partner(s)."""
+    # Find active partnerships
+    stmt = select(Partnership).where(
+        or_(Partnership.user1_id == current_user.id, Partnership.user2_id == current_user.id),
+        Partnership.is_active == True
+    )
+    result = await db.execute(stmt)
+    partnerships = result.scalars().all()
+    partner_ids = set()
+    for p in partnerships:
+        if p.user1_id == current_user.id:
+            partner_ids.add(p.user2_id)
+        else:
+            partner_ids.add(p.user1_id)
+    if not partner_ids:
+        return []
+    # Get shared components from partners
+    stmt = select(FinancialComponent).where(
+        FinancialComponent.user_id.in_(partner_ids),
+        FinancialComponent.is_shared_with_partner == True
+    )
+    result = await db.execute(stmt)
+    components = result.scalars().all()
+    return components
+
+
+@router.patch("/{component_id}/sharing", response_model=FinancialComponentSchema)
+async def update_sharing_setting(
+    component_id: UUID,
+    is_shared_with_partner: bool,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """Update sharing setting for a financial component."""
+    stmt = select(FinancialComponent).where(
+        FinancialComponent.id == component_id,
+        FinancialComponent.user_id == current_user.id
+    )
+    result = await db.execute(stmt)
+    component = result.scalar_one_or_none()
+    if not component:
+        raise HTTPException(status_code=404, detail="Financial component not found")
+    component.is_shared_with_partner = is_shared_with_partner
+    await db.commit()
+    await db.refresh(component)
+    return component 
