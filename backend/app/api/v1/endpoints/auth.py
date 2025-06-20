@@ -37,7 +37,7 @@ async def register(
     user = User(
         email=user_in.email,
         hashed_password=get_password_hash(user_in.password),
-        full_name=user_in.full_name
+        name=user_in.full_name if hasattr(user_in, 'full_name') else None
     )
     
     db.add(user)
@@ -66,12 +66,6 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Inactive user"
-        )
-    
     # Create access token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
@@ -89,4 +83,19 @@ async def read_users_me(
     current_user: User = Depends(get_current_active_user)
 ) -> Any:
     """Get current user information"""
-    return current_user 
+    return current_user
+
+
+@router.post("/change-password")
+async def change_password(
+    old_password: str,
+    new_password: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """Change password for the current user"""
+    if not verify_password(old_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Old password is incorrect")
+    current_user.hashed_password = get_password_hash(new_password)
+    await db.commit()
+    return {"message": "Password updated successfully"} 
