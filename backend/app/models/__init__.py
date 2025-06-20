@@ -1,16 +1,15 @@
 # SQLAlchemy models
 
 from .user import User
+from .partnership import Partnership
 from .financial_component import FinancialComponent
-from .scenario import Scenario, ScenarioComponent
+from .scenario import Scenario
 from .monthly_projection import MonthlyProjection
-from .life_event import LifeEvent
 
 __all__ = [
     "User",
-    "FinancialComponent", 
+    "Partnership",
+    "FinancialComponent",
     "Scenario",
-    "ScenarioComponent",
-    "MonthlyProjection",
-    "LifeEvent"
+    "MonthlyProjection"
 ] 

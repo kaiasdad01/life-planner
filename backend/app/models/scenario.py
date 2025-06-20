@@ -1,6 +1,5 @@
-from sqlalchemy import Column, String, DateTime, Text, JSON, ForeignKey, Boolean, Integer, Date
+from sqlalchemy import Column, String, DateTime, Text, JSON, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 from ..core.database import Base
@@ -10,32 +9,18 @@ class Scenario(Base):
     __tablename__ = "scenarios"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     
     # Scenario metadata
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
-    is_default = Column(Boolean, default=False)  # Current plan scenario
     
     # Scenario settings
-    projection_months = Column(Integer, default=60)  # How many months to project
-    start_date = Column(Date, nullable=False)
-    
-    # Life events that affect this scenario
-    life_events = Column(JSON, nullable=True)  # List of life event IDs and dates
-    
-    # Visibility and sharing
-    is_private = Column(Boolean, default=True)
-    shared_with_partner = Column(Boolean, default=False)
+    component_ids = Column(JSON, nullable=False)  # List of component UUIDs
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    
-    # Relationships
-    user = relationship("User", back_populates="scenarios")
-    scenario_components = relationship("ScenarioComponent", back_populates="scenario")
-    monthly_projections = relationship("MonthlyProjection", back_populates="scenario")
     
     def __repr__(self):
         return f"<Scenario(id={self.id}, name={self.name})>"
