@@ -3,6 +3,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
 from uuid import UUID
+from fastapi.responses import StreamingResponse
+import csv
+import io
 
 from ....core.database import get_db
 from ....models import User, Scenario, ScenarioComponent, MonthlyProjection, Partnership, FinancialComponent
@@ -245,32 +248,112 @@ async def get_scenario_projections(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ) -> Any:
-    """Get projections for a scenario"""
-    
-    # Verify scenario exists and belongs to user
+    """Get projections for a scenario (owned or shared with partner)"""
+    # Try to get as owner
     stmt = select(Scenario).where(
         Scenario.id == scenario_id,
         Scenario.user_id == current_user.id
     )
     result = await db.execute(stmt)
     scenario = result.scalar_one_or_none()
-    
     if not scenario:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Scenario not found"
+        # If not owner, check if shared by partner
+        from ....models import Partnership
+        from sqlalchemy import or_
+        stmt2 = select(Partnership).where(
+            or_(Partnership.user1_id == current_user.id, Partnership.user2_id == current_user.id),
+            Partnership.is_active == True
         )
-    
+        result2 = await db.execute(stmt2)
+        partnerships = result2.scalars().all()
+        partner_ids = set()
+        for p in partnerships:
+            if p.user1_id == current_user.id:
+                partner_ids.add(p.user2_id)
+            else:
+                partner_ids.add(p.user1_id)
+        if not partner_ids:
+            raise HTTPException(status_code=404, detail="Scenario not found")
+        stmt = select(Scenario).where(
+            Scenario.id == scenario_id,
+            Scenario.user_id.in_(partner_ids)
+        )
+        result = await db.execute(stmt)
+        scenario = result.scalar_one_or_none()
+        if not scenario:
+            raise HTTPException(status_code=404, detail="Scenario not found")
     # Get projections
     stmt = select(MonthlyProjection).where(
-        MonthlyProjection.scenario_id == scenario_id,
-        MonthlyProjection.user_id == current_user.id
-    ).order_by(MonthlyProjection.month_number).offset(skip).limit(limit)
-    
+        MonthlyProjection.scenario_id == scenario_id
+    ).order_by(MonthlyProjection.month).offset(skip).limit(limit)
     result = await db.execute(stmt)
     projections = result.scalars().all()
-    
     return projections
+
+
+@router.get("/{scenario_id}/projections/export-csv")
+async def export_projections_csv(
+    scenario_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Export projections for a scenario as CSV (owned or shared with partner)"""
+    # Reuse access logic from get_scenario_projections
+    stmt = select(Scenario).where(
+        Scenario.id == scenario_id,
+        Scenario.user_id == current_user.id
+    )
+    result = await db.execute(stmt)
+    scenario = result.scalar_one_or_none()
+    if not scenario:
+        from ....models import Partnership
+        from sqlalchemy import or_
+        stmt2 = select(Partnership).where(
+            or_(Partnership.user1_id == current_user.id, Partnership.user2_id == current_user.id),
+            Partnership.is_active == True
+        )
+        result2 = await db.execute(stmt2)
+        partnerships = result2.scalars().all()
+        partner_ids = set()
+        for p in partnerships:
+            if p.user1_id == current_user.id:
+                partner_ids.add(p.user2_id)
+            else:
+                partner_ids.add(p.user1_id)
+        if not partner_ids:
+            raise HTTPException(status_code=404, detail="Scenario not found")
+        stmt = select(Scenario).where(
+            Scenario.id == scenario_id,
+            Scenario.user_id.in_(partner_ids)
+        )
+        result = await db.execute(stmt)
+        scenario = result.scalar_one_or_none()
+        if not scenario:
+            raise HTTPException(status_code=404, detail="Scenario not found")
+    # Get projections
+    stmt = select(MonthlyProjection).where(
+        MonthlyProjection.scenario_id == scenario_id
+    ).order_by(MonthlyProjection.month)
+    result = await db.execute(stmt)
+    projections = result.scalars().all()
+    # Prepare CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+    # Write header
+    writer.writerow([
+        "month", "total_income", "total_expenses", "net_flow", "running_balance", "component_details"
+    ])
+    for p in projections:
+        writer.writerow([
+            p.month,
+            p.total_income,
+            p.total_expenses,
+            p.net_flow,
+            p.running_balance,
+            str(p.component_details)
+        ])
+    output.seek(0)
+    return StreamingResponse(output, media_type="text/csv", headers={"Content-Disposition": f"attachment; filename=projections_{scenario_id}.csv"})
 
 
 @router.get("/{scenario_id}/summary", response_model=ProjectionSummary)
