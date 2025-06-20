@@ -1,11 +1,11 @@
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from uuid import UUID
 
 from ....core.database import get_db
-from ....models import User, Scenario, ScenarioComponent, MonthlyProjection
+from ....models import User, Scenario, ScenarioComponent, MonthlyProjection, Partnership, FinancialComponent
 from ....schemas import (
     Scenario as ScenarioSchema,
     ScenarioCreate,
@@ -341,4 +341,122 @@ async def get_scenario_summary(
         net_worth_change=net_worth_change,
         best_month=best_month.projection_date,
         worst_month=worst_month.projection_date
-    ) 
+    )
+
+
+@router.get("/shared", response_model=List[ScenarioSchema])
+async def get_shared_scenarios(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """Get scenarios shared with the current user by their active partner(s)."""
+    # Find active partnerships
+    stmt = select(Partnership).where(
+        or_(Partnership.user1_id == current_user.id, Partnership.user2_id == current_user.id),
+        Partnership.is_active == True
+    )
+    result = await db.execute(stmt)
+    partnerships = result.scalars().all()
+    partner_ids = set()
+    for p in partnerships:
+        if p.user1_id == current_user.id:
+            partner_ids.add(p.user2_id)
+        else:
+            partner_ids.add(p.user1_id)
+    if not partner_ids:
+        return []
+    # Get scenarios from partners
+    stmt = select(Scenario).where(
+        Scenario.user_id.in_(partner_ids)
+    )
+    result = await db.execute(stmt)
+    scenarios = result.scalars().all()
+    return scenarios
+
+
+@router.patch("/{scenario_id}/add-component")
+async def add_component_to_scenario(
+    scenario_id: UUID,
+    component_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """Add a component to a scenario."""
+    stmt = select(Scenario).where(
+        Scenario.id == scenario_id,
+        Scenario.user_id == current_user.id
+    )
+    result = await db.execute(stmt)
+    scenario = result.scalar_one_or_none()
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    # Add component if not already present
+    ids = set(scenario.component_ids or [])
+    ids.add(str(component_id))
+    scenario.component_ids = list(ids)
+    await db.commit()
+    await db.refresh(scenario)
+    return {"message": "Component added", "component_ids": scenario.component_ids}
+
+
+@router.patch("/{scenario_id}/remove-component")
+async def remove_component_from_scenario(
+    scenario_id: UUID,
+    component_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """Remove a component from a scenario."""
+    stmt = select(Scenario).where(
+        Scenario.id == scenario_id,
+        Scenario.user_id == current_user.id
+    )
+    result = await db.execute(stmt)
+    scenario = result.scalar_one_or_none()
+    if not scenario:
+        raise HTTPException(status_code=404, detail="Scenario not found")
+    ids = set(scenario.component_ids or [])
+    ids.discard(str(component_id))
+    scenario.component_ids = list(ids)
+    await db.commit()
+    await db.refresh(scenario)
+    return {"message": "Component removed", "component_ids": scenario.component_ids}
+
+
+@router.post("/compare")
+async def compare_scenarios(
+    scenario_ids: List[UUID],
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+) -> Any:
+    """Compare two scenarios side-by-side (projections for each)."""
+    if len(scenario_ids) != 2:
+        raise HTTPException(status_code=400, detail="Exactly two scenario IDs required")
+    projections = []
+    for sid in scenario_ids:
+        # Only allow access to own or shared scenarios
+        stmt = select(Scenario).where(Scenario.id == sid)
+        result = await db.execute(stmt)
+        scenario = result.scalar_one_or_none()
+        if not scenario:
+            raise HTTPException(status_code=404, detail=f"Scenario {sid} not found")
+        if scenario.user_id != current_user.id:
+            # Check if shared by partner
+            stmt2 = select(Partnership).where(
+                or_(Partnership.user1_id == current_user.id, Partnership.user2_id == current_user.id),
+                Partnership.is_active == True
+            )
+            result2 = await db.execute(stmt2)
+            partnerships = result2.scalars().all()
+            partner_ids = set()
+            for p in partnerships:
+                if p.user1_id == current_user.id:
+                    partner_ids.add(p.user2_id)
+                else:
+                    partner_ids.add(p.user1_id)
+            if scenario.user_id not in partner_ids:
+                raise HTTPException(status_code=403, detail=f"No access to scenario {sid}")
+        # Calculate projections
+        proj = await projection_engine.calculate_scenario_projection(db, scenario, str(current_user.id))
+        projections.append({"scenario_id": str(sid), "projections": [p.dict() for p in proj]})
+    return {"comparisons": projections} 
