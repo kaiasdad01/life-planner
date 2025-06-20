@@ -1,0 +1,137 @@
+# Financial Life Planning App - Development Guidelines
+
+## Project Overview
+This is a strategic life planning tool for couples focused on high-level financial modeling and long-term decision making. This is NOT a budgeting app - we're building a tool for major life decisions and multi-year financial planning.
+
+## Core Architecture
+- **Backend**: Python FastAPI with SQLAlchemy + PostgreSQL
+- **Frontend**: React TypeScript with Tailwind CSS
+- **Deployment**: Railway (backend) + Vercel (frontend)
+- **Database**: PostgreSQL with time-series financial projections
+
+## Key Domain Concepts
+
+### Financial Components
+- Self-contained calculators with user-defined Python formulas
+- Examples: "Primary Job Income", "Student Loan Payment", "Stock Vests"
+- Each component has variables (base_salary, interest_rate) and calculation logic
+- Support start/end dates, frequencies, and seasonal variations
+
+### Scenarios
+- Collections of financial components representing different life paths
+- "Current Plan" vs "Career Change in 2026" vs "Aggressive Debt Payoff"
+- Generate 60+ months of projections for comparison
+
+### Life Events
+- Major changes that affect multiple components: job changes, babies, house purchases
+- Should cascade through financial projections with configurable impact
+
+### Partnerships
+- Two users sharing selective financial data
+- Privacy-first: users choose what to share vs keep private
+- Joint scenarios without requiring full financial disclosure
+
+## Technical Guidelines
+
+### Python Backend
+- Use FastAPI with async/await patterns
+- SQLAlchemy models with proper relationships and constraints
+- Pydantic schemas for all API validation
+- UUID primary keys for all models
+- Comprehensive error handling and logging
+
+### Formula Engine Security
+- Use restricted eval() with limited globals for user formulas
+- Only allow math operations, no file system or network access
+- Validate all user inputs before formula evaluation
+- Include comprehensive error messages for formula debugging
+
+### Financial Calculations
+- Use Python Decimal for all monetary calculations (avoid floating point errors)
+- Handle edge cases: negative balances, zero income periods, component overlaps
+- Support monthly granularity extending 5-10 years into future
+- Cache expensive projection calculations
+
+### React Frontend
+- TypeScript strict mode - no any types
+- Tailwind for styling, prefer utility classes
+- React Query for API state management
+- Zustand for client-side state
+- Recharts for financial visualizations
+
+### API Design
+- RESTful endpoints with consistent naming
+- Proper HTTP status codes
+- Comprehensive request/response validation
+- Include pagination for list endpoints
+- Support filtering and sorting where appropriate
+
+## Code Style
+
+### Python
+- Follow PEP 8 with 100 character line length
+- Use type hints for all function parameters and returns
+- Prefer composition over inheritance
+- Write docstrings for all public functions
+- Use meaningful variable names in financial contexts
+
+### TypeScript/React
+- Use functional components with hooks
+- Prefer custom hooks for complex logic
+- Keep components focused and single-purpose
+- Use proper TypeScript interfaces, no implicit any
+- Comment complex financial calculation logic
+
+### Database
+- Use descriptive table and column names
+- Include proper indexes for financial queries
+- Use constraints to enforce data integrity
+- Plan for soft deletes on financial data
+
+## Security Requirements
+- Never store raw user formulas without validation
+- Sanitize all financial inputs
+- Use proper authentication for partnership features
+- Encrypt sensitive financial data at rest
+- Audit trail for all financial modifications
+
+## Integration Guidelines
+
+### Linear Integration
+- Use OAuth for secure API access
+- Map financial goals to Linear projects/issues
+- Handle API rate limits gracefully
+- Provide clear error messages for integration failures
+
+### External APIs
+- Always include timeout and retry logic
+- Cache responses when appropriate
+- Handle API unavailability gracefully
+- Log all external API interactions
+
+## Development Workflow
+- Work in small, testable increments
+- Write tests for all financial calculation logic
+- Use realistic test data that matches actual use cases
+- Explain complex financial formulas in comments
+- Ask for code review on security-sensitive areas
+
+## Error Handling
+- Provide user-friendly error messages for formula errors
+- Include helpful suggestions for common mistakes
+- Log detailed errors for debugging without exposing internals
+- Gracefully handle edge cases in financial calculations
+
+## Performance
+- Cache expensive projection calculations
+- Use database indexes for financial queries
+- Optimize for typical usage patterns (monthly check-ins)
+- Consider background processing for complex scenarios
+
+When generating code:
+1. Include comprehensive error handling
+2. Add detailed comments for financial logic
+3. Use proper TypeScript types
+4. Follow security best practices
+5. Consider edge cases in financial calculations
+6. Write testable, modular code
